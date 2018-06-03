@@ -12,6 +12,7 @@ import (
 
     "github.com/philipyao/toolbox/util"
     "github.com/philipyao/phttp"
+    "log"
 )
 
 type App struct {
@@ -39,123 +40,130 @@ type HTTPWorker struct {
     *phttp.HTTPWorker
 }
 
-var (
-    ptrWanIP          *string
-)
-
 var defaultApp  = &App{done: make(chan struct{})}
 func init() {
     defaultApp.prepare()
 }
 
-func (sv *App) addr() string {
-    return fmt.Sprintf("%v:%v", *sv.argIP, *sv.argPort)
+func (app *App) addr() string {
+    return fmt.Sprintf("%v:%v", *app.argIP, *app.argPort)
 }
 
-//func (sv *App) setRpc(r *prpc.Worker) {
-//    sv.rpc = r
+//func (app *App) setRpc(r *prpc.Worker) {
+//    app.rpc = r
 //}
 //
-func (sv *App) setHttp(h *phttp.HTTPWorker) {
-    sv.http = h
+func (app *App) setHttp(h *phttp.HTTPWorker) {
+    app.http = h
 }
 
-func (sv *App) prepare() {
-    sv.readArgs()
+func (app *App) prepare() {
+    app.prepareArgs()
 }
 
-func (sv *App) init() error {
-    sv.logFunc("App start...")
+func (app *App) init() error {
+    app.logFunc("App start...")
 
-    if sv.bInited {
+    if app.bInited {
         panic("already inited.")
     }
 
-    err := sv.initFunc(sv.done)
+    app.readArgs()
+
+    err := app.initFunc(app.done)
     if err != nil {
         return err
     }
-    sv.bInited = true
-    sv.logFunc("App init ok.")
+    app.bInited = true
+    app.logFunc("App init ok.")
     return nil
 }
 
-func (sv *App) run() {
-    if !sv.bInited {
+func (app *App) run() {
+    if !app.bInited {
         panic("not inited")
     }
-    //if sv.rpc != nil {
-    //    sv.wg.Add(1)
-    //    go sv.rpc.Serve(sv.done, &sv.wg)
+    //if app.rpc != nil {
+    //    app.wg.Add(1)
+    //    go app.rpc.Serve(app.done, &app.wg)
     //}
-    if sv.http != nil {
-        sv.wg.Add(1)
-        go sv.http.Serve(sv.done, &sv.wg)
+    if app.http != nil {
+        app.wg.Add(1)
+        go app.http.Serve(app.done, &app.wg)
     }
-    sv.writePid()
+    app.writePid()
 
-    sv.wg.Add(1)
-    go sv.listenInterupt()
+    app.wg.Add(1)
+    go app.listenInterupt()
 
-    sv.wg.Wait()
+    app.wg.Wait()
 
-    sv.shutdownFunc()
-    sv.removePid()
+    app.shutdownFunc()
+    app.removePid()
 }
 
 //====================================
 
-func (sv *App) readArgs() {
-    sv.argCluster = flag.Int("c", 0, "App clusterid")
-    sv.argIndex = flag.Int("i", 0, "App instance index")
-    sv.argIP = flag.String("l", "0.0.0.0", "App local ip")
-    sv.argPort = flag.Int("p", 0, "App rpc port")
-    ptrWanIP = flag.String("w", "0.0.0.0", "App wan ip")
-
-    flag.Parse()
-    if *sv.argPort <= 0 {
-        panic("no App port specified!")
-    }
-    if *sv.argCluster <= 0 {
-        panic("no App cluster id specified")
-    }
+func (app *App) prepareArgs() {
+    app.argCluster = flag.Int("c", 0, "App clusterid")
+    app.argIndex = flag.Int("i", 0, "App instance index")
+    app.argIP = flag.String("l", "0.0.0.0", "App local ip")
+    app.argPort = flag.Int("p", 0, "App rpc port")
+    //ptrWanIP = flag.String("w", "0.0.0.0", "App wan ip")
 }
 
-func (sv *App) listenInterupt() {
-    defer sv.wg.Done()
+func (app *App) readArgs() {
+    flag.Parse()
+    if *app.argPort <= 0 {
+        panic("no App port specified!")
+    }
+    if *app.argCluster <= 0 {
+        panic("no App cluster id specified")
+    }
+    log.Printf("args: cluster<%v>, index<%v>, ip<%v>, port<%v>",
+        *app.argCluster, *app.argIndex, *app.argIP, *app.argPort)
+}
+
+func (app *App) listenInterupt() {
+    defer app.wg.Done()
 
     sigs := make(chan os.Signal, 1)
     signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
     <-sigs
-    sv.shutdown()
+    app.shutdown()
 }
 
-func (sv *App) shutdown() {
-    sv.logFunc("graceful shutdown...")
-    close(sv.done)
+func (app *App) shutdown() {
+    app.logFunc("graceful shutdown...")
+    close(app.done)
 }
 
-func (sv *App) writePid() {
-    pName := sv.processName()
+func (app *App) writePid() {
+    pName := app.processName()
     pidFile := util.GenPidFilePath(pName)
-    util.WritePidToFile(pidFile, os.Getpid())
+    err := util.WritePidToFile(pidFile, os.Getpid())
+    if err != nil {
+        log.Print(err)
+        return
+    }
+    log.Printf("write pid to %v", pidFile)
 }
 
-func (sv *App) removePid() {
-    pName := sv.processName()
+func (app *App) removePid() {
+    pName := app.processName()
     pidFile := util.GenPidFilePath(pName)
     util.DeletePidFile(pidFile)
 }
 
-func (sv *App) processName() string {
-    if sv.pName != "" {
-        return sv.pName
+func (app *App) processName() string {
+    if app.pName != "" {
+        return app.pName
     }
-    sv.pName = filepath.Base(os.Args[0])
-    if *sv.argIndex > 0 {
-        sv.pName = fmt.Sprintf("%v%v", sv.pName, *sv.argIndex)
+    app.pName = filepath.Base(os.Args[0])
+    if *app.argIndex > 0 {
+        app.pName = fmt.Sprintf("%v%v", app.pName, *app.argIndex)
     }
-    return sv.pName
+    return app.pName
 }
 
 
@@ -174,7 +182,7 @@ func HandleBase(onInit func(chan struct{}) error, onShutdown func()) error {
     if defaultApp.logFunc == nil {
         defaultApp.logFunc = defaultLogFunc()
     }
-    return defaultApp.init()
+    return nil
 }
 
 // 可选，注册rpc服务
@@ -208,6 +216,10 @@ func SetLogger(l func(int, string, ...interface{})) {
 
 // server运行入口函数
 func Run() {
+    err := defaultApp.init()
+    if err != nil {
+        panic(err)
+    }
     defaultApp.run()
 }
 
