@@ -2,22 +2,21 @@ package app
 
 import (
     "testing"
-    "log"
+    "fmt"
     "os"
+    "log"
 )
 
 func TestRunApp(t *testing.T) {
-    os.Args = []string{"appTest", "-c", "100", "-i", "1", "-l", "127.0.0.1", "-p", "10021"}
+    // cluster: 100
+    // index: 1
+    os.Args = []string{"appTest", "-c", "world100", "-i", "1"}
     var err error
-    err = HandleBase(
-        func(done chan struct{}) error {
-            log.Println("app init ok.")
+    err = UseInit(
+        func() error {
+            fmt.Println("== init ok.")
             return nil
-        },
-        func () {
-            log.Println("app shutdown ok.")
-        },
-    )
+        })
     if err != nil {
         log.Fatalf("srv.HandleBase() err: %v", err)
     }

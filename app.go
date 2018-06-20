@@ -11,8 +11,6 @@ import (
     "syscall"
 
     "github.com/philipyao/toolbox/util"
-    "github.com/philipyao/phttp"
-    "log"
 )
 
 type App struct {
@@ -23,21 +21,13 @@ type App struct {
     done        chan struct{}
     wg          sync.WaitGroup
 
+    argCluster  *string
     argIndex    *int
-    argCluster  *int
-    argIP       *string
-    argPort     *int
 
-    initFunc        func(chan struct{}) error
-    shutdownFunc    func()
-    logFunc         func(format string, args ...interface{})
-
-    //rpc         *prpc.Worker
-    http        *phttp.HTTPWorker
-}
-
-type HTTPWorker struct {
-    *phttp.HTTPWorker
+    fnInit      func() error
+    fnServe     func(<-chan struct{}) error
+    fnFini      func()
+    logFunc     func(format string, args ...interface{})
 }
 
 var defaultApp  = &App{done: make(chan struct{})}
@@ -45,24 +35,16 @@ func init() {
     defaultApp.prepare()
 }
 
-func (app *App) addr() string {
-    return fmt.Sprintf("%v:%v", *app.argIP, *app.argPort)
-}
-
-//func (app *App) setRpc(r *prpc.Worker) {
-//    app.rpc = r
-//}
-//
-func (app *App) setHttp(h *phttp.HTTPWorker) {
-    app.http = h
-}
-
 func (app *App) prepare() {
     app.prepareArgs()
 }
 
-func (app *App) init() error {
-    app.logFunc("App start...")
+func (app *App) Init() error {
+    if app.logFunc == nil {
+        app.logFunc = defaultLogFunc()
+    }
+
+    app.logFunc("init...")
 
     if app.bInited {
         panic("already inited.")
@@ -70,26 +52,30 @@ func (app *App) init() error {
 
     app.readArgs()
 
-    err := app.initFunc(app.done)
-    if err != nil {
-        return err
+    var err error
+    if app.fnInit != nil {
+        err = app.fnInit()
+        if err != nil {
+            return err
+        }
     }
+
     app.bInited = true
-    app.logFunc("App init ok.")
+    app.logFunc("init ok.")
     return nil
 }
 
-func (app *App) run() {
+func (app *App) Run() {
+    app.logFunc("run...")
     if !app.bInited {
         panic("not inited")
     }
-    //if app.rpc != nil {
-    //    app.wg.Add(1)
-    //    go app.rpc.Serve(app.done, &app.wg)
-    //}
-    if app.http != nil {
-        app.wg.Add(1)
-        go app.http.Serve(app.done, &app.wg)
+    if app.fnServe != nil {
+        err := app.fnServe(app.done)
+        if err != nil {
+            app.logFunc(err.Error())
+            return
+        }
     }
     app.writePid()
 
@@ -98,30 +84,29 @@ func (app *App) run() {
 
     app.wg.Wait()
 
-    app.shutdownFunc()
+    app.logFunc("finalize...")
+    if app.fnFini != nil {
+        app.fnFini()
+    }
     app.removePid()
 }
 
 //====================================
 
 func (app *App) prepareArgs() {
-    app.argCluster = flag.Int("c", 0, "App clusterid")
-    app.argIndex = flag.Int("i", 0, "App instance index")
-    app.argIP = flag.String("l", "0.0.0.0", "App local ip")
-    app.argPort = flag.Int("p", 0, "App rpc port")
-    //ptrWanIP = flag.String("w", "0.0.0.0", "App wan ip")
+    app.argCluster = flag.String("c", "", "App cluster")
+    app.argIndex = flag.Int("i", 0, "App index")
 }
 
 func (app *App) readArgs() {
     flag.Parse()
-    if *app.argPort <= 0 {
-        panic("no App port specified!")
+    if *app.argCluster == "" {
+        panic("no App cluster specified")
     }
-    if *app.argCluster <= 0 {
-        panic("no App cluster id specified")
+    if *app.argIndex <= 0 {
+        panic("no App index specified or invalid index")
     }
-    log.Printf("args: cluster<%v>, index<%v>, ip<%v>, port<%v>",
-        *app.argCluster, *app.argIndex, *app.argIP, *app.argPort)
+    app.logFunc("args: cluster<%v>, name<%v>", *app.argCluster, app.processName())
 }
 
 func (app *App) listenInterupt() {
@@ -134,7 +119,7 @@ func (app *App) listenInterupt() {
 }
 
 func (app *App) shutdown() {
-    app.logFunc("graceful shutdown...")
+    app.logFunc("receive cmd: graceful shutdown.")
     close(app.done)
 }
 
@@ -143,16 +128,17 @@ func (app *App) writePid() {
     pidFile := util.GenPidFilePath(pName)
     err := util.WritePidToFile(pidFile, os.Getpid())
     if err != nil {
-        log.Print(err)
+        app.logFunc(err.Error())
         return
     }
-    log.Printf("write pid to %v", pidFile)
+    app.logFunc("pid file <%v> writen.", pidFile)
 }
 
 func (app *App) removePid() {
     pName := app.processName()
     pidFile := util.GenPidFilePath(pName)
     util.DeletePidFile(pidFile)
+    app.logFunc("pid file removed.")
 }
 
 func (app *App) processName() string {
@@ -169,44 +155,40 @@ func (app *App) processName() string {
 
 //=====================================================
 
-//必须实现，server基础接口
-func HandleBase(onInit func(chan struct{}) error, onShutdown func()) error {
-    if onInit == nil {
-        return errors.New("nil onInit.")
+// app 自定义初始化
+func UseInit(fnInit func() error) error {
+    if fnInit == nil {
+        return errors.New("nil fnInit")
     }
-    if onShutdown == nil {
-        return errors.New("nil onShutdown.")
-    }
-    defaultApp.initFunc = onInit
-    defaultApp.shutdownFunc = onShutdown
-    if defaultApp.logFunc == nil {
-        defaultApp.logFunc = defaultLogFunc()
-    }
+    defaultApp.fnInit = fnInit
     return nil
 }
 
-// 可选，注册rpc服务
-//func HandleRpc(rpcName string, rpcWorker interface{}) error {
-//    rpcW := prpc.New(defaultApp.addr(), rpcName, rpcWorker)
-//    if rpcW == nil {
-//        return errors.New(prpc.ErrMsg())
-//    }
-//    rpcW.SetLog(defaultApp.logFunc)
-//    defaultApp.setRpc(rpcW)
-//
-//    return nil
-//}
-//
-// 可选，注册http服务
-func HandleHttp(addr string) (*HTTPWorker, error) {
-    httpW := phttp.New(addr)
-    if httpW == nil {
-        return nil, errors.New("init http error")
+// app 自定义服务
+func UseServe(fnServe func(<-chan struct{}) error) error {
+    if fnServe == nil {
+        return errors.New("nil fnServe")
     }
-    httpW.SetLog(defaultApp.logFunc)
-    defaultApp.setHttp(httpW)
+    defaultApp.fnServe = fnServe
+    return nil
+}
 
-    return &HTTPWorker{httpW}, nil
+// app 自定义回收
+func UseFini(fnFini func()) error {
+    if fnFini == nil {
+        return errors.New("nil fnFini")
+    }
+    defaultApp.fnFini = fnFini
+    return nil
+}
+
+// app 运行入口函数
+func Run() {
+    err := defaultApp.Init()
+    if err != nil {
+        panic(err)
+    }
+    defaultApp.Run()
 }
 
 //可选，自定义log输出
@@ -214,14 +196,6 @@ func SetLogger(l func(int, string, ...interface{})) {
     defaultApp.logFunc = customLogFunc(l)
 }
 
-// server运行入口函数
-func Run() {
-    err := defaultApp.init()
-    if err != nil {
-        panic(err)
-    }
-    defaultApp.run()
-}
 
 // 获取server进程名字
 func ProcessName() string {
