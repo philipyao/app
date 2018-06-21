@@ -91,6 +91,25 @@ func (app *App) Run() {
     app.removePid()
 }
 
+func (app *App) Cluster() string{
+    return *app.argCluster
+}
+
+func (app *App) Index() int {
+    return *app.argIndex
+}
+
+func (app *App) ProcessName() string {
+    if app.pName != "" {
+        return app.pName
+    }
+    app.pName = filepath.Base(os.Args[0])
+    if *app.argIndex > 0 {
+        app.pName = fmt.Sprintf("%v%v", app.pName, *app.argIndex)
+    }
+    return app.pName
+}
+
 //====================================
 
 func (app *App) prepareArgs() {
@@ -106,7 +125,7 @@ func (app *App) readArgs() {
     if *app.argIndex <= 0 {
         panic("no App index specified or invalid index")
     }
-    app.logFunc("args: cluster<%v>, name<%v>", *app.argCluster, app.processName())
+    app.logFunc("args: cluster<%v>, name<%v>", *app.argCluster, app.ProcessName())
 }
 
 func (app *App) listenInterupt() {
@@ -124,7 +143,7 @@ func (app *App) shutdown() {
 }
 
 func (app *App) writePid() {
-    pName := app.processName()
+    pName := app.ProcessName()
     pidFile := util.GenPidFilePath(pName)
     err := util.WritePidToFile(pidFile, os.Getpid())
     if err != nil {
@@ -135,22 +154,12 @@ func (app *App) writePid() {
 }
 
 func (app *App) removePid() {
-    pName := app.processName()
+    pName := app.ProcessName()
     pidFile := util.GenPidFilePath(pName)
     util.DeletePidFile(pidFile)
     app.logFunc("pid file removed.")
 }
 
-func (app *App) processName() string {
-    if app.pName != "" {
-        return app.pName
-    }
-    app.pName = filepath.Base(os.Args[0])
-    if *app.argIndex > 0 {
-        app.pName = fmt.Sprintf("%v%v", app.pName, *app.argIndex)
-    }
-    return app.pName
-}
 
 
 //=====================================================
@@ -196,8 +205,15 @@ func SetLogger(l func(int, string, ...interface{})) {
     defaultApp.logFunc = customLogFunc(l)
 }
 
+func Cluster() string {
+    return defaultApp.Cluster()
+}
+
+func Index() int {
+    return defaultApp.Index()
+}
 
 // 获取server进程名字
 func ProcessName() string {
-    return defaultApp.processName()
+    return defaultApp.ProcessName()
 }
