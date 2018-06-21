@@ -30,13 +30,12 @@ type App struct {
     logFunc     func(format string, args ...interface{})
 }
 
-var defaultApp  = &App{done: make(chan struct{})}
-func init() {
-    defaultApp.prepare()
-}
+var defaultApp = NewApp()
 
-func (app *App) prepare() {
-    app.prepareArgs()
+func NewApp() *App {
+    app := &App{done: make(chan struct{})}
+    app.prepare()
+    return app
 }
 
 func (app *App) Init() error {
@@ -45,11 +44,9 @@ func (app *App) Init() error {
     }
 
     app.logFunc("init...")
-
     if app.bInited {
         panic("already inited.")
     }
-
     app.readArgs()
 
     var err error
@@ -91,6 +88,18 @@ func (app *App) Run() {
     app.removePid()
 }
 
+func (app *App) UseInit(fnInit func() error) {
+    app.fnInit = fnInit
+}
+
+func (app *App) UseServe(fnServe func(done <-chan struct{}) error) {
+    app.fnServe = fnServe
+}
+
+func (app *App) UseFini(fnFini func()) {
+    app.fnFini = fnFini
+}
+
 func (app *App) Cluster() string{
     return *app.argCluster
 }
@@ -110,7 +119,15 @@ func (app *App) ProcessName() string {
     return app.pName
 }
 
+func (app *App) SetLogger(logFunc func(string, ...interface{})) {
+    app.logFunc = logFunc
+}
+
 //====================================
+
+func (app *App) prepare() {
+    app.prepareArgs()
+}
 
 func (app *App) prepareArgs() {
     app.argCluster = flag.String("c", "", "App cluster")
@@ -160,8 +177,6 @@ func (app *App) removePid() {
     app.logFunc("pid file removed.")
 }
 
-
-
 //=====================================================
 
 // app 自定义初始化
@@ -169,7 +184,7 @@ func UseInit(fnInit func() error) error {
     if fnInit == nil {
         return errors.New("nil fnInit")
     }
-    defaultApp.fnInit = fnInit
+    defaultApp.UseInit(fnInit)
     return nil
 }
 
@@ -178,7 +193,7 @@ func UseServe(fnServe func(<-chan struct{}) error) error {
     if fnServe == nil {
         return errors.New("nil fnServe")
     }
-    defaultApp.fnServe = fnServe
+    defaultApp.UseServe(fnServe)
     return nil
 }
 
@@ -187,7 +202,7 @@ func UseFini(fnFini func()) error {
     if fnFini == nil {
         return errors.New("nil fnFini")
     }
-    defaultApp.fnFini = fnFini
+    defaultApp.UseFini(fnFini)
     return nil
 }
 
@@ -202,7 +217,7 @@ func Run() {
 
 //可选，自定义log输出
 func SetLogger(l func(int, string, ...interface{})) {
-    defaultApp.logFunc = customLogFunc(l)
+    defaultApp.SetLogger(customLogFunc(l))
 }
 
 func Cluster() string {

@@ -8,8 +8,6 @@ import (
 )
 
 func TestRunApp(t *testing.T) {
-    // cluster: 100
-    // index: 1
     os.Args = []string{"appTest", "-c", "world100", "-i", "1"}
     var err error
     err = UseInit(
@@ -18,7 +16,7 @@ func TestRunApp(t *testing.T) {
             return nil
         })
     if err != nil {
-        log.Fatalf("srv.HandleBase() err: %v", err)
+        log.Fatalf("srv.UseInit() err: %v", err)
     }
     Run()
 }
