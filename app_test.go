@@ -2,21 +2,14 @@ package app
 
 import (
     "testing"
-    "fmt"
     "os"
-    "log"
+    "github.com/philipyao/phttp"
 )
 
 func TestRunApp(t *testing.T) {
     os.Args = []string{"appTest", "-c", "world100", "-i", "1"}
-    var err error
-    err = UseInit(
-        func() error {
-            fmt.Println("== init ok.")
-            return nil
-        })
-    if err != nil {
-        log.Fatalf("srv.UseInit() err: %v", err)
-    }
+    UseServiceHttp(":12003", func(w *phttp.HTTPWorker) error {
+        return nil
+    })
     Run()
 }

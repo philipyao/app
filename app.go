@@ -11,6 +11,7 @@ import (
     "syscall"
 
     "github.com/philipyao/toolbox/util"
+    "github.com/philipyao/phttp"
 )
 
 type App struct {
@@ -24,6 +25,7 @@ type App struct {
     argCluster  *string
     argIndex    *int
 
+    services    []Service
     fnInit      func() error
     fnServe     func(<-chan struct{}) error
     fnFini      func()
@@ -50,8 +52,8 @@ func (app *App) Init() error {
     app.readArgs()
 
     var err error
-    if app.fnInit != nil {
-        err = app.fnInit()
+    for _, srv := range app.services {
+        err = srv.OnInit()
         if err != nil {
             return err
         }
@@ -67,11 +69,10 @@ func (app *App) Run() {
     if !app.bInited {
         panic("not inited")
     }
-    if app.fnServe != nil {
-        err := app.fnServe(app.done)
+    for _, srv := range app.services {
+        err := srv.Serve()
         if err != nil {
-            app.logFunc(err.Error())
-            return
+            panic(err)
         }
     }
     app.writePid()
@@ -82,22 +83,14 @@ func (app *App) Run() {
     app.wg.Wait()
 
     app.logFunc("finalize...")
-    if app.fnFini != nil {
-        app.fnFini()
+    for i := len(app.services) - 1; i >= 0; i-- {
+        app.services[i].OnFini()
     }
     app.removePid()
 }
 
-func (app *App) UseInit(fnInit func() error) {
-    app.fnInit = fnInit
-}
-
-func (app *App) UseServe(fnServe func(done <-chan struct{}) error) {
-    app.fnServe = fnServe
-}
-
-func (app *App) UseFini(fnFini func()) {
-    app.fnFini = fnFini
+func (app *App) UseService(srv Service) {
+    app.services = append(app.services, srv)
 }
 
 func (app *App) Cluster() string{
@@ -152,6 +145,9 @@ func (app *App) listenInterupt() {
     signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
     <-sigs
     app.shutdown()
+    for _, srv := range app.services {
+        srv.Close()
+    }
 }
 
 func (app *App) shutdown() {
@@ -179,32 +175,37 @@ func (app *App) removePid() {
 
 //=====================================================
 
-// app 自定义初始化
-func UseInit(fnInit func() error) error {
-    if fnInit == nil {
-        return errors.New("nil fnInit")
+// 可选：开启 rpc 服务
+func UseServiceRpc(addr, regAddr string, rcvr interface{}, name string) error {
+    srv := newServiceRpc(
+        defaultApp,
+        rcvr,
+        name,
+        addr,
+        regAddr,
+    )
+    if srv == nil {
+        return errors.New("new rpc service")
     }
-    defaultApp.UseInit(fnInit)
+    defaultApp.UseService(srv)
     return nil
 }
 
-// app 自定义服务
-func UseServe(fnServe func(<-chan struct{}) error) error {
-    if fnServe == nil {
-        return errors.New("nil fnServe")
+//可选：开启 http 服务
+func UseServiceHttp(addr string, handler func(worker *phttp.HTTPWorker) error) error {
+    srv := newServiceHttp(addr, handler)
+    if srv == nil {
+        return errors.New("new http service")
     }
-    defaultApp.UseServe(fnServe)
+    defaultApp.UseService(srv)
     return nil
 }
 
-// app 自定义回收
-func UseFini(fnFini func()) error {
-    if fnFini == nil {
-        return errors.New("nil fnFini")
-    }
-    defaultApp.UseFini(fnFini)
-    return nil
+//可选：开启自定义服务
+func UseService(srv Service) {
+    defaultApp.UseService(srv)
 }
+
 
 // app 运行入口函数
 func Run() {

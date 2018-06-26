@@ -57,3 +57,12 @@ app is a server app framework for game development
  2018/06/03 11:29:49 app shutdown ok.
  
  ```
+
+## TODO
+
+* rand seed
+* gc ticker
+* custom signal handle
+* custom flag
+* command: help & version & pprof & reload & manual_gc & cpu_num
+
