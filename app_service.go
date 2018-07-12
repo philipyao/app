@@ -4,7 +4,6 @@ import (
     rpc "github.com/philipyao/prpc/server"
     "github.com/philipyao/prpc/registry"
     "github.com/philipyao/phttp"
-    "fmt"
     "log"
 )
 
@@ -16,21 +15,12 @@ type Service interface {
 }
 
 type serviceRpc struct {
-    app *App
     rcvr interface{}
     name string
     addr, regAddr string
     rpcServer  *rpc.Server
 }
 func (sr *serviceRpc) OnInit() error {
-    rpcServer := rpc.New(
-        sr.app.Cluster(),
-        sr.app.Index(),
-    )
-    if rpcServer == nil {
-        return fmt.Errorf("create rpc error: %v %v", sr.app.Cluster(), sr.app.Index())
-    }
-    sr.rpcServer = rpcServer
     return sr.rpcServer.Handle(sr.rcvr, sr.name)
 }
 func (sr *serviceRpc) Serve() error {
@@ -44,14 +34,23 @@ func (sr *serviceRpc) OnFini() {
     sr.rpcServer.Fini()
 }
 
-func newServiceRpc(app *App, rcvr interface{},
-    name, addr, regAddr string) *serviceRpc {
+func newServiceRpc(cluster string, index int, rcvr interface{},
+    name, addr, registry string) *serviceRpc {
     sr := new(serviceRpc)
-    sr.app = app
     sr.name = name
     sr.rcvr = rcvr
     sr.addr = addr
-    sr.regAddr = regAddr
+    sr.regAddr = registry
+
+    rpcServer := rpc.New(
+        cluster,
+        index,
+    )
+    if rpcServer == nil {
+        return nil
+    }
+    sr.rpcServer = rpcServer
+
     return sr
 }
 

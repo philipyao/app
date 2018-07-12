@@ -5,13 +5,14 @@ import (
     "os"
     "os/signal"
     "flag"
-    "errors"
     "sync"
+    "time"
     "path/filepath"
     "syscall"
 
     "github.com/philipyao/toolbox/util"
     "github.com/philipyao/phttp"
+    "math/rand"
 )
 
 type App struct {
@@ -26,31 +27,54 @@ type App struct {
     argIndex    *int
 
     services    []Service
-    fnInit      func() error
-    fnServe     func(<-chan struct{}) error
-    fnFini      func()
-    logFunc     func(format string, args ...interface{})
+    fnArgOpts   []FnArgOption
+    fnOpts      []FnOption
+
+    option
 }
 
 var defaultApp = NewApp()
 
 func NewApp() *App {
     app := &App{done: make(chan struct{})}
-    app.prepare()
     return app
 }
 
-func (app *App) Init() error {
-    if app.logFunc == nil {
-        app.logFunc = defaultLogFunc()
+func (app *App) ReadArgs(opts ...FnArgOption) {
+    //app.fnArgOpts = opts
+    app.prepareArgs()
+    for _, opt := range opts {
+        opt()
     }
+    app.readArgs()
+}
 
-    app.logFunc("init...")
+func (app *App) Init(opts ...FnOption) error {
     if app.bInited {
         panic("already inited.")
     }
-    app.readArgs()
 
+    rand.Seed(time.Now().UnixNano())
+
+    for _, opt := range opts {
+        opt(&app.option)
+    }
+    if app.logFunc == nil {
+        app.logFunc = defaultLogFunc()
+    }
+    app.logFunc("app init...")
+
+    app.bInited = true
+    return nil
+}
+
+func (app *App) Run(svcs ...Service) error {
+    if !app.bInited {
+        panic("not inited")
+    }
+    app.logFunc("app run with %v service(s)...", len(svcs))
+
+    app.services = svcs
     var err error
     for _, srv := range app.services {
         err = srv.OnInit()
@@ -58,21 +82,10 @@ func (app *App) Init() error {
             return err
         }
     }
-
-    app.bInited = true
-    app.logFunc("init ok.")
-    return nil
-}
-
-func (app *App) Run() {
-    app.logFunc("run...")
-    if !app.bInited {
-        panic("not inited")
-    }
     for _, srv := range app.services {
         err := srv.Serve()
         if err != nil {
-            panic(err)
+            return err
         }
     }
     app.writePid()
@@ -87,17 +100,20 @@ func (app *App) Run() {
         app.services[i].OnFini()
     }
     app.removePid()
-}
-
-func (app *App) UseService(srv Service) {
-    app.services = append(app.services, srv)
+    return nil
 }
 
 func (app *App) Cluster() string{
+    if !app.bInited {
+        panic("not inited")
+    }
     return *app.argCluster
 }
 
 func (app *App) Index() int {
+    if !app.bInited {
+        panic("not inited")
+    }
     return *app.argIndex
 }
 
@@ -112,19 +128,11 @@ func (app *App) ProcessName() string {
     return app.pName
 }
 
-func (app *App) SetLogger(logFunc func(string, ...interface{})) {
-    app.logFunc = logFunc
-}
-
 //====================================
 
-func (app *App) prepare() {
-    app.prepareArgs()
-}
-
 func (app *App) prepareArgs() {
-    app.argCluster = flag.String("c", "", "App cluster")
-    app.argIndex = flag.Int("i", 0, "App index")
+    app.argCluster = flag.String("cluster", "", "app cluster")
+    app.argIndex = flag.Int("index", 0, "app index")
 }
 
 func (app *App) readArgs() {
@@ -135,7 +143,6 @@ func (app *App) readArgs() {
     if *app.argIndex <= 0 {
         panic("no App index specified or invalid index")
     }
-    app.logFunc("args: cluster<%v>, name<%v>", *app.argCluster, app.ProcessName())
 }
 
 func (app *App) listenInterupt() {
@@ -176,49 +183,35 @@ func (app *App) removePid() {
 //=====================================================
 
 // 可选：开启 rpc 服务
-func UseServiceRpc(addr, regAddr string, rcvr interface{}, name string) error {
-    srv := newServiceRpc(
-        defaultApp,
+func ServeRpc(addr, registry string, rcvr interface{}, name string) Service {
+    return newServiceRpc(
+        defaultApp.Cluster(),
+        defaultApp.Index(),
         rcvr,
         name,
         addr,
-        regAddr,
+        registry,
     )
-    if srv == nil {
-        return errors.New("new rpc service")
-    }
-    defaultApp.UseService(srv)
-    return nil
 }
 
 //可选：开启 http 服务
-func UseServiceHttp(addr string, handler func(worker *phttp.HTTPWorker) error) error {
-    srv := newServiceHttp(addr, handler)
-    if srv == nil {
-        return errors.New("new http service")
-    }
-    defaultApp.UseService(srv)
-    return nil
+func ServeHttp(addr string, handler func(worker *phttp.HTTPWorker) error) Service {
+    return newServiceHttp(addr, handler)
 }
 
-//可选：开启自定义服务
-func UseService(srv Service) {
-    defaultApp.UseService(srv)
+//1. app 读取命令行参数，可以自定义参数
+func ReadArgs(opts ...FnArgOption) {
+    defaultApp.ReadArgs(opts...)
 }
 
-
-// app 运行入口函数
-func Run() {
-    err := defaultApp.Init()
-    if err != nil {
-        panic(err)
-    }
-    defaultApp.Run()
+//2. app 初始化
+func Init(opts ...FnOption) error {
+    return defaultApp.Init(opts...)
 }
 
-//可选，自定义log输出
-func SetLogger(l func(int, string, ...interface{})) {
-    defaultApp.SetLogger(customLogFunc(l))
+//3. app 运行入口函数
+func Run(svcs ...Service) error {
+    return defaultApp.Run(svcs...)
 }
 
 func Cluster() string {

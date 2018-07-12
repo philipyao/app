@@ -7,9 +7,19 @@ import (
 )
 
 func TestRunApp(t *testing.T) {
-    os.Args = []string{"appTest", "-c", "world100", "-i", "1"}
-    UseServiceHttp(":12003", func(w *phttp.HTTPWorker) error {
-        return nil
-    })
-    Run()
+    os.Args = []string{"appTest", "-cluster", "world100", "-index", "1"}
+    ReadArgs()
+    err := Init()
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    err = Run(
+        ServeHttp(":12003", func(w *phttp.HTTPWorker) error {
+            return nil
+        }),
+    )
+    if err != nil {
+        t.Fatal(err)
+    }
 }
